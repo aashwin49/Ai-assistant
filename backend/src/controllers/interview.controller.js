@@ -5,6 +5,7 @@ const {
   generatePdfFromHtml,
 } = require("../services/ai.service");
 const interviewReportModel = require("../models/interviewReport.model");
+const { getCacheKey, getCachedResult, setCachedResult, getCachedBuffer, setCachedBuffer } = require("../utils/cache");
 
 async function generateInterViewReportController(req, res) {
   try {
@@ -21,7 +22,20 @@ async function generateInterViewReportController(req, res) {
     const resumeContent = await new pdfParse.PDFParse(Uint8Array.from(req.file.buffer)).getText();
     const resumeText = resumeContent.Text || resumeContent.text || "";
 
-    const interViewReportByAi = await generateInterviewReport(resumeText, selfDescription, jobDescription);
+    const start = Date.now();
+    const cacheKey = `interview:${getCacheKey(resumeText, selfDescription, jobDescription)}`;
+
+    let interViewReportByAi = await getCachedResult(cacheKey);
+    let cacheHit = true;
+
+    if (!interViewReportByAi) {
+      cacheHit = false;
+      interViewReportByAi = await generateInterviewReport(resumeText, selfDescription, jobDescription);
+      await setCachedResult(cacheKey, interViewReportByAi);
+    }
+
+    console.log(`[Cache ${cacheHit ? "HIT" : "MISS"}] Interview report response time: ${Date.now() - start}ms`);
+
     const interviewReport = await interviewReportModel.create({
       user: req.user.id,
       resumeText,
@@ -35,7 +49,11 @@ async function generateInterViewReportController(req, res) {
       prepPlan: interViewReportByAi.preparationPlan,
     });
 
-    return res.status(201).json({ message: "Interview report generated successfully.", interviewReport });
+    return res.status(201).json({
+      message: "Interview report generated successfully.",
+      interviewReport,
+      cacheHit,
+    });
   } catch (error) {
     console.error("Generate interview report error:", error);
     return res.status(500).json({ message: "Failed to generate interview report." });
@@ -77,15 +95,14 @@ async function generateResumePdfController(req, res) {
     const { interviewId } = req.params;
     const userId = req.user?.id || req.user?._id;
 
+    // User-supplied raw HTML — no Gemini call happens here, so nothing to cache.
     if (req.body?.html) {
       const pdfBuffer = await generatePdfFromHtml(req.body.html);
-
       res.set({
         "Content-Type": "application/pdf",
         "Content-Disposition": `attachment; filename=resume_${interviewId}.pdf`,
         "Content-Length": pdfBuffer.length,
       });
-
       return res.send(pdfBuffer);
     }
 
@@ -95,16 +112,33 @@ async function generateResumePdfController(req, res) {
       return res.status(404).json({ message: "Interview report not found." });
     }
 
-    const pdfBuffer = await generateResumePdf({
-      resume: interviewReport.resumeText,
-      selfDescription: interviewReport.selfDescription,
-      jobDescription: interviewReport.jobDescription,
-    });
+    const start = Date.now();
+    const cacheKey = `resume-pdf:${getCacheKey(
+      interviewReport.resumeText,
+      interviewReport.selfDescription,
+      interviewReport.jobDescription
+    )}`;
+
+    let pdfBuffer = await getCachedBuffer(cacheKey);
+    let cacheHit = true;
+
+    if (!pdfBuffer) {
+      cacheHit = false;
+      pdfBuffer = await generateResumePdf({
+        resume: interviewReport.resumeText,
+        selfDescription: interviewReport.selfDescription,
+        jobDescription: interviewReport.jobDescription,
+      });
+      await setCachedBuffer(cacheKey, pdfBuffer);
+    }
+
+    console.log(`[Cache ${cacheHit ? "HIT" : "MISS"}] Resume PDF response time: ${Date.now() - start}ms`);
 
     res.set({
       "Content-Type": "application/pdf",
       "Content-Disposition": `attachment; filename=resume_${interviewId}.pdf`,
       "Content-Length": pdfBuffer.length,
+      "X-Cache": cacheHit ? "HIT" : "MISS",
     });
 
     return res.send(pdfBuffer);
@@ -113,7 +147,6 @@ async function generateResumePdfController(req, res) {
     return res.status(500).json({ message: "Failed to generate resume PDF." });
   }
 }
-
 
 
 module.exports = {
