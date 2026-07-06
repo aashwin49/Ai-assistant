@@ -109,3 +109,7 @@ A few non-obvious issues came up deploying this to Render + Vercel, worth docume
 - **Puppeteer on Render's free tier:** the standard `puppeteer` package expects to download and cache its own Chromium binary, which doesn't reliably persist between Render's build and runtime environments. Switched to `puppeteer-core` + `@sparticuz/chromium` (a Chromium build made for constrained/serverless environments) instead, pinned to a pre-v149 release since v149 dropped CommonJS support.
 
 ---
+
+## License
+
+MIT
