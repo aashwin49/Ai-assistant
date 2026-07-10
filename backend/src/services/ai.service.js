@@ -172,6 +172,8 @@ async function generatePdfFromHtml(htmlContent) {
     });
 
     const page = await browser.newPage();
+    
+    await page.setJavaScriptEnabled(false);
     await page.setContent(htmlContent, { waitUntil: "networkidle0" });
 
     return await page.pdf({
